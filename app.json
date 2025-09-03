@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.wellaura.coach" 
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to show you the current weather for your area."
+      },
+      "bundleIdentifier": "com.wellaura.coach"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +21,10 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.wellaura.coach" 
+      "package": "com.wellaura.coach",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
