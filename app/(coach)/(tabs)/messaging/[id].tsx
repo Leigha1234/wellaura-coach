@@ -1,118 +1,136 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Video } from 'expo-av';
-import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Actions, Bubble, GiftedChat, IMessage, InputToolbar, Send } from 'react-native-gifted-chat';
+import { Image, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Bubble, GiftedChat, IMessage, InputToolbar, Send } from 'react-native-gifted-chat';
+import { supabase } from '../../../../lib/supabase';
+import { useAuth } from '../../../context/AuthContext';
 import { useTheme } from '../../../context/ThemeContext';
-import { useTrainingPlan } from '../../../context/TrainingPlanContext'; // 1. Import the hook
+import { useTrainingPlan } from '../../../context/TrainingPlanContext';
 
-// --- MOCK DATA ---
-// In a real app, this user data would come from a global context or API call
+// --- MOCK DATA (Only for profile info, not messages) ---
+// In a real app, this would come from a `profiles` table in Supabase
 const mockUsers = {
-  '123': { name: 'Leigha', avatar: 'https://i.pravatar.cc/150?u=leigha' },
   '1': { name: 'Jane Doe', avatar: 'https://i.pravatar.cc/150?img=25' },
   '2': { name: 'John Smith', avatar: 'https://i.pravatar.cc/150?img=60' },
   '3': { name: 'Alice Johnson', avatar: 'https://i.pravatar.cc/150?img=32' },
   '4': { name: 'Michael Brown', avatar: 'https://i.pravatar.cc/150?img=12' },
 };
 
-// --- Attachment Preview Component ---
-const AttachmentPreview = ({ uri, type, onRemove, theme }) => {
-  return (
-    <View style={{ padding: 8, backgroundColor: theme.surface }}>
-      <View style={{ position: 'relative', width: 70, height: 70 }}>
-        {type === 'video' ? (
-          <Video source={{ uri }} style={{ width: 70, height: 70, borderRadius: 8 }} resizeMode="cover" />
-        ) : (
-          <Image source={{ uri }} style={{ width: 70, height: 70, borderRadius: 8 }} />
-        )}
-        <TouchableOpacity
-          onPress={onRemove}
-          style={{ position: 'absolute', top: -5, right: -5, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
-          <Ionicons name="close" size={16} color="white" />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
-
-// --- Main Chat Component ---
 export default function MessagingPage() {
   const { id: recipientId } = useLocalSearchParams<{ id: string }>();
   const { theme } = useTheme();
   const styles = getDynamicStyles(theme);
   const router = useRouter();
-  const { planToSend, setPlanToSend } = useTrainingPlan(); // 2. Get context state
+  const { user: currentUser } = useAuth();
+  const { planToSend, setPlanToSend } = useTrainingPlan();
 
   const [messages, setMessages] = useState<IMessage[]>([]);
-  const [attachment, setAttachment] = useState<{ uri: string; type: 'image' | 'video' } | null>(null);
-  const [text, setText] = useState(''); // 3. Add state for the input text
-
-  const currentUser = { _id: '123', ...mockUsers['123'] };
-  const recipient = { _id: recipientId, ...mockUsers[recipientId] };
+  const [text, setText] = useState('');
   
-  const getChatId = (uid1: string, uid2: string) => `chat_${[uid1, uid2].sort().join('_')}`;
+  // Create a consistent, sorted chat ID for the database
+  const getChatId = (uid1: string, uid2: string) => [uid1, uid2].sort().join('_');
 
-  // Effect to load historical messages from storage
+  // --- 1. FETCH HISTORICAL MESSAGES ---
   useEffect(() => {
-    const loadMessages = async () => {
-      if (!recipientId) return;
-      const chatId = getChatId(currentUser._id, recipientId);
-      try {
-        const storedMessages = await AsyncStorage.getItem(chatId);
-        if (storedMessages) {
-          const parsedMessages = JSON.parse(storedMessages).map(msg => ({ ...msg, createdAt: new Date(msg.createdAt) }));
-          setMessages(parsedMessages);
-        }
-      } catch (error) { console.error("Failed to load messages:", error); }
-    };
-    loadMessages();
-  }, [recipientId]);
+    const fetchMessages = async () => {
+      if (!currentUser || !recipientId) return;
 
-  // 4. Effect to check for a plan to send when the component loads
+      const chatId = getChatId(currentUser.id, recipientId);
+
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('chat_id', chatId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Error fetching messages:", error);
+        return;
+      }
+      
+      const formattedMessages = data.map(msg => ({
+        _id: msg.id,
+        text: msg.content,
+        createdAt: new Date(msg.created_at),
+        user: {
+          _id: msg.sender_id,
+          name: msg.sender_id === currentUser.id ? currentUser.name : mockUsers[recipientId]?.name,
+          avatar: msg.sender_id === currentUser.id ? '' : mockUsers[recipientId]?.avatar,
+        }
+      }));
+      setMessages(formattedMessages);
+    };
+
+    fetchMessages();
+  }, [recipientId, currentUser]);
+
+
+  // --- 2. LISTEN FOR NEW MESSAGES IN REAL-TIME ---
+  useEffect(() => {
+    if (!currentUser || !recipientId) return;
+
+    const chatId = getChatId(currentUser.id, recipientId);
+    const channel = supabase.channel(`chat_${chatId}`);
+    
+    const subscription = channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
+        (payload) => {
+          const newMessage = payload.new;
+          const formattedMessage = {
+            _id: newMessage.id,
+            text: newMessage.content,
+            createdAt: new Date(newMessage.created_at),
+            user: {
+              _id: newMessage.sender_id,
+              name: newMessage.sender_id === currentUser.id ? currentUser.name : mockUsers[recipientId]?.name,
+              avatar: newMessage.sender_id === currentUser.id ? '' : mockUsers[recipientId]?.avatar,
+            }
+          };
+          setMessages(previousMessages => GiftedChat.append(previousMessages, [formattedMessage]));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [recipientId, currentUser]);
+  
+  // Effect to check for a plan to send when the component loads
   useEffect(() => {
     if (planToSend) {
-      setText(planToSend); // Populate the input box
-      setPlanToSend(null); // Clear the plan from context
+      setText(planToSend);
+      setPlanToSend(null);
     }
   }, [planToSend]);
 
-  const pickMedia = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      videoMaxDuration: 0,
-      allowsEditing: true,
-      quality: 0.7,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      const asset = result.assets[0];
-      setAttachment({ uri: asset.uri, type: asset.type as 'image' | 'video' });
-    }
-  };
-
+  // --- 3. SEND NEW MESSAGES ---
   const onSend = useCallback(async (newMessages: IMessage[] = []) => {
-    const messageToSend = { ...newMessages[0] };
-    if (attachment) {
-      if (attachment.type === 'image') messageToSend.image = attachment.uri;
-      else if (attachment.type === 'video') messageToSend.video = attachment.uri;
-      setAttachment(null);
-    }
-    
-    setMessages(previousMessages => GiftedChat.append(previousMessages, [messageToSend]));
-    setText(''); // 5. Clear the input after sending
+    if (!currentUser || !recipientId) return;
 
-    // Save to AsyncStorage
-    const chatId = getChatId(currentUser._id, recipientId);
-    try {
-        const currentMessages = await AsyncStorage.getItem(chatId);
-        const updatedMessages = GiftedChat.append(currentMessages ? JSON.parse(currentMessages) : [], [messageToSend]);
-        await AsyncStorage.setItem(chatId, JSON.stringify(updatedMessages));
-    } catch (error) { console.error("Failed to save message:", error); }
-  }, [attachment, recipientId]);
+    const message = newMessages[0];
+    const chatId = getChatId(currentUser.id, recipientId);
+    setText(''); // Clear input immediately
+
+    const { error } = await supabase.from('messages').insert({
+      chat_id: chatId,
+      sender_id: currentUser.id,
+      recipient_id: recipientId,
+      content: message.text,
+    });
+
+    if (error) {
+      console.error('Error sending message:', error);
+      // Optional: handle failed message, e.g., show an error icon
+    }
+  }, [recipientId, currentUser]);
+
   
+  if (!theme || !currentUser) return null;
+
+  const recipient = { _id: recipientId, ...mockUsers[recipientId] };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
@@ -126,27 +144,13 @@ export default function MessagingPage() {
       <GiftedChat
         messages={messages}
         onSend={onSend}
-        user={currentUser}
-        // 6. Connect GiftedChat input to the state
+        user={{ _id: currentUser.id }}
         text={text}
         onInputTextChanged={setText}
-        alwaysShowSend
         renderAvatarOnTop
-        renderActions={(props) => (
-            <Actions {...props} containerStyle={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-            icon={() => <Ionicons name="attach" size={28} color={theme.primary} />}
-            onPressActionButton={pickMedia} />
-        )}
+        messagesContainerStyle={{ backgroundColor: theme.background }}
         renderInputToolbar={(props) => (
-          <>
-            {attachment && <AttachmentPreview uri={attachment.uri} type={attachment.type} onRemove={() => setAttachment(null)} theme={theme} />}
-            <InputToolbar {...props} containerStyle={{ backgroundColor: theme.surface, borderTopColor: theme.border }} />
-          </>
-        )}
-        renderMessageVideo={(props) => (
-          <View style={{ padding: 4, borderRadius: 15 }}>
-            <Video source={{ uri: props.currentMessage.video }} useNativeControls style={{ width: 200, height: 200, borderRadius: 13 }} resizeMode="cover" />
-          </View>
+          <InputToolbar {...props} containerStyle={{ backgroundColor: theme.surface, borderTopColor: theme.border }} />
         )}
         renderSend={(props) => (
           <Send {...props} containerStyle={{ justifyContent: 'center' }}>
@@ -154,11 +158,14 @@ export default function MessagingPage() {
           </Send>
         )}
         textInputStyle={{ color: theme.textPrimary }}
-        renderBubble={props => (
-          <Bubble {...props}
-            wrapperStyle={{ left: { backgroundColor: theme.border }, right: { backgroundColor: theme.primary } }}
-            textStyle={{ left: { color: theme.textPrimary }, right: { color: theme.white } }}
-          />
+        renderBubble={(props) => (
+            <Bubble {...props} wrapperStyle={{
+                left: { backgroundColor: theme.surface },
+                right: { backgroundColor: theme.primary }
+            }} textStyle={{
+                left: { color: theme.textPrimary },
+                right: { color: theme.white }
+            }}/>
         )}
       />
     </SafeAreaView>
@@ -166,8 +173,8 @@ export default function MessagingPage() {
 }
 
 const getDynamicStyles = (theme: any) => StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: theme.background },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: theme.surface, borderBottomWidth: 1, borderBottomColor: theme.border, },
-  headerAvatar: { width: 36, height: 36, borderRadius: 18, marginLeft: 10, },
-  headerText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginLeft: 15, },
+    safeArea: { flex: 1, backgroundColor: Platform.OS === 'android' ? theme.surface : theme.background },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: theme.surface, borderBottomWidth: 1, borderBottomColor: theme.border },
+    headerAvatar: { width: 36, height: 36, borderRadius: 18, marginLeft: 10 },
+    headerText: { color: theme.textPrimary, fontSize: 18, fontWeight: 'bold', marginLeft: 15 },
 });

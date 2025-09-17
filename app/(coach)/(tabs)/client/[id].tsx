@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Image, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import CheckInSchedulerModal from '../../../../components/CheckInSchedulerModal';
 import ClientProgressChart from '../../../../components/ClientProgressChart';
-import { dummyClients } from '../../../../lib/data';
+import { dummyClients } from '../../../../lib/data'; // Using mock data for client profiles
 import { useTheme } from '../../../context/ThemeContext';
 import { useTrainingPlan } from '../../../context/TrainingPlanContext';
 
@@ -54,21 +54,37 @@ export default function ClientDetailPage() {
     const { id } = useLocalSearchParams();
     const { theme } = useTheme();
     const styles = getDynamicStyles(theme);
-    const { getClientPlan } = useTrainingPlan();
+    const { getClientPlan, fetchClientPlan } = useTrainingPlan();
     const [isSchedulerVisible, setSchedulerVisible] = useState(false);
     
+    // Fetch the static client profile data
     const client = dummyClients.find(c => c.id === id);
+    // Get the dynamic, assigned plan from the context cache
     const assignedPlan = typeof id === 'string' ? getClientPlan(id) : null;
+
+    // useEffect to fetch the plan data from Supabase when the page loads
+    useEffect(() => {
+        if (typeof id === 'string' && !assignedPlan) {
+            fetchClientPlan(id);
+        }
+    }, [id]);
 
     if (!client) {
         return (
-            <SafeAreaView style={styles.screen}><View style={styles.notFoundContainer}><Text style={styles.headerTitle}>Client not found</Text></View></SafeAreaView>
+            <SafeAreaView style={styles.screen}>
+                <View style={styles.notFoundContainer}>
+                    <Text style={styles.headerTitle}>Client not found</Text>
+                </View>
+            </SafeAreaView>
         );
     }
     
     const handleScheduleCheckIn = (scheduleDetails: any) => {
         console.log('Scheduled:', scheduleDetails);
-        Alert.alert( 'Check-in Scheduled!', `Frequency: ${scheduleDetails.frequency}\nDay: ${scheduleDetails.day}\nTime: ${scheduleDetails.time}` );
+        Alert.alert(
+            'Check-in Scheduled!',
+            `Frequency: ${scheduleDetails.frequency}\nDay: ${scheduleDetails.day}\nTime: ${scheduleDetails.time}`
+        );
     };
 
     const statusStyles = {
@@ -115,11 +131,7 @@ export default function ClientDetailPage() {
                                     <Text style={styles.secondaryActionButtonText}>See Plan</Text>
                                 </TouchableOpacity>
                             )}
-                            <TouchableOpacity 
-                                style={styles.actionButton} 
-                                // --- THIS PATH IS NOW CORRECTED ---
-                                onPress={() => router.push(`/training-plan/assign?clientId=${client.id}`)}
-                            >
+                            <TouchableOpacity style={styles.actionButton} onPress={() => router.push(`/training-plan/assign?clientId=${client.id}`)}>
                                 <Text style={styles.actionButtonText}>{assignedPlan ? 'Change Plan' : 'Assign Plan'}</Text>
                             </TouchableOpacity>
                         </View>

@@ -37,15 +37,13 @@ const RootLayoutNav = () => {
     const router = useRouter();
 
     useEffect(() => {
-        // Don't run any navigation logic until the auth state has been checked.
         if (isLoading) return;
 
         const inAppGroup = segments[0] === '(coach)' || segments[0] === '(client)';
 
         if (!user && inAppGroup) {
-            // If the user is not signed in and is trying to access a protected
-            // route (anything inside the coach or client groups), redirect them
-            // to the main role selection screen.
+            // If the user is not signed in and tries to access a protected route,
+            // redirect them to the main role selection screen.
             router.replace('/');
         } else if (user && !inAppGroup) {
             // If the user IS signed in but is currently on the role selection
@@ -59,7 +57,6 @@ const RootLayoutNav = () => {
     }, [user, isLoading, segments]);
 
     // The <Slot /> component renders the currently active child route.
-    // This could be index.tsx, (coach), or (client).
     return <Slot />;
 }
 

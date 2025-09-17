@@ -1,21 +1,20 @@
-import { Feather, Ionicons } from "@expo/vector-icons";
+import { Feather, FontAwesome, Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Link } from "expo-router";
+import moment from "moment";
 import React, { useEffect, useMemo, useState } from "react";
-import { LayoutAnimation, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, UIManager, View } from "react-native";
+import { Alert, Image, LayoutAnimation, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
 import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flatlist";
 import { PanGestureHandler } from "react-native-gesture-handler";
 import Animated, { interpolateColor, runOnJS, useAnimatedGestureHandler, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
+import ColorPicker from "react-native-wheel-color-picker";
 import tinycolor from "tinycolor2";
-
-// Import the extracted modal components
-import { AddWidgetModal } from "../../../components/AddWidgetModal";
-import { ColorPickerModal } from "../../../components/ColorPickerModal";
-import { ThemeEditorModal } from "../../../components/ThemeEditorModal";
 import TodaySnapshotModal from "../../../components/TodaySnapshot";
 import { WeatherWidget } from "../../../components/WeatherWidget";
-
+import { generateWeeklyInsights } from "../../../lib/insights";
 import { useAuth } from "../../context/AuthContext";
+import { useCycle } from "../../context/CycleContext";
+import { useMealPlan } from "../../context/MealPlanContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useWellaura } from "../../WellauraContext";
 
@@ -25,6 +24,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 // --- CONSTANTS ---
+const pastelColors = ['#FFFFFF', '#fde4cf', '#fbf8cc', '#d9f9cc', '#cce6ff', '#d9cce6', '#fccfcf', '#cfd8dc'];
 const PRESET_THEMES = [
     { name: "Wellaura's Whisper", colors: { primary: '#395D48', accent: '#8CBCA7', background: '#E4ECEA', surface: '#FFFFFF', textPrimary: '#2C2C2C', textSecondary: '#395D48', border: '#D8E0D9', white: '#FFFFFF' }},
     { name: 'Ocean Breeze', colors: { primary: '#3B82F6', accent: '#93C5FD', background: '#F0F9FF', surface: '#FFFFFF', textPrimary: '#1E3A8A', textSecondary: '#3B82F6', border: '#DBEAFE', white: '#FFFFFF' }},
@@ -42,6 +42,7 @@ const PRESET_THEMES = [
 const WIDGETS_STORAGE_KEY = '@coach_widgets_layout_v1';
 const LAYOUT_STORAGE_KEY = '@coach_layout_columns_v1';
 const THEME_STORAGE_KEY = '@coach_theme_v1';
+
 
 // --- DYNAMIC STYLES ---
 const getDynamicStyles = (theme: any) => {
@@ -87,29 +88,64 @@ const getDynamicStyles = (theme: any) => {
       statusActive: { backgroundColor: '#22C55E' },
       statusInactive: { backgroundColor: '#9CA3AF' },
       workoutExerciseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+      modalBackdrop: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" },
+      modalContainer: { width: "90%", maxHeight: '80%', borderRadius: 24, padding: 24, alignItems: "center" },
+      modalTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 20 },
+      addWidgetItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.border, padding: 15, borderRadius: 15, marginBottom: 10 },
+      addWidgetItemText: { fontSize: 18, fontWeight: '500', marginLeft: 15, color: theme.textPrimary },
+      confirmButton: { marginTop: 24, paddingVertical: 14, paddingHorizontal: 40, backgroundColor: theme.primary, borderRadius: 20 },
+      confirmButtonText: { fontSize: 16, fontWeight: 'bold' },
+      pickerWrapper: { height: 250, width: '100%', marginBottom: 20, },
+      swatchLabel: { fontSize: 16, fontWeight: '600', color: theme.textSecondary, alignSelf: 'flex-start', marginBottom: 10 },
+      swatchContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 },
+      swatch: { width: 36, height: 36, borderRadius: 18, margin: 4, borderWidth: 3 },
+      hexInputContainer: { flexDirection: 'row', alignItems: 'center', width: '100%' },
+      hexInput: { flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 12, paddingHorizontal: 10, height: 44, color: theme.textPrimary, fontSize: 16, fontWeight: '500' },
+      applyButton: { marginLeft: 10, backgroundColor: theme.border, paddingHorizontal: 15, height: 44, justifyContent: 'center', borderRadius: 12 },
+      applyButtonText: { fontWeight: 'bold', color: theme.textPrimary },
+      themeEditorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: theme.border },
+      themeEditorLabel: { fontSize: 18, color: theme.textPrimary },
+      themeEditorSwatch: { width: 30, height: 30, borderRadius: 15, borderWidth: 2, borderColor: theme.border },
+      presetThemeScrollView: { paddingBottom: 10, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: theme.border},
+      presetThemeCard: { width: 120, height: 120, borderRadius: 16, marginRight: 12, padding: 12, borderWidth: 3 },
+      presetThemeName: { fontWeight: 'bold', fontSize: 14 },
+      presetThemeColors: { flexDirection: 'row', marginTop: 'auto' },
+      presetThemeSwatch: { width: 20, height: 20, borderRadius: 10, marginRight: -8, borderWidth: 2 },
     });
 };
 
-// --- WIDGET COMPONENTS ---
+// --- WIDGET COMPONENTS (Defined inside the main file) ---
 const SkeletonLoader = ({ height, styles }: any) => { const shimmer = useSharedValue(0); useEffect(() => { shimmer.value = withRepeat(withTiming(1, { duration: 1200 }), -1, false); }, []); const animatedStyle = useAnimatedStyle(() => ({ backgroundColor: interpolateColor(shimmer.value, [0, 0.5, 1], [styles.screen.backgroundColor, styles.card.backgroundColor, styles.screen.backgroundColor]) })); return <Animated.View style={[styles.skeleton, { height: height - 40 }, animatedStyle]} />; };
-const ClientDashboardWidget = React.memo(({ styles }: any) => { /* ... Your component code ... */ return <View><Text style={styles.cardText}>Client overview will be here.</Text></View> });
-const CalendarWidget = React.memo(({ styles }: any) => { /* ... Your component code ... */ return <View><Text style={styles.cardText}>Calendar content will be here.</Text></View> });
-const WorkoutWidget = React.memo(({ styles }: any) => { /* ... Your component code ... */ return <View><Text style={styles.cardText}>Workout content will be here.</Text></View> });
-const InsightsWidget = React.memo(({ theme, styles }: any) => { /* ... Your component code ... */ return <View></View>});
+const ClientDashboardWidget = React.memo(({ styles }: any) => { const dummyClients = [ { id: '1', name: 'Jane Doe', avatarUrl: 'https://i.pravatar.cc/150?img=25', status: 'Active', lastCheckIn: 'Yesterday' }, { id: '2', name: 'John Smith', avatarUrl: 'https://i.pravatar.cc/150?img=60', status: 'Active', lastCheckIn: '3 days ago' },]; return ( <View>{dummyClients.map((client) => ( <View key={client.id} style={styles.clientRow}><Image source={{ uri: client.avatarUrl }} style={styles.clientAvatar} /><View style={styles.clientInfo}><Text style={styles.clientName}>{client.name}</Text><Text style={styles.clientStatusText}>Last Check-in: {client.lastCheckIn}</Text></View><View style={[styles.statusIndicator, client.status === 'Active' ? styles.statusActive : styles.statusInactive]} /></View> ))}</View> ); });
+const CalendarWidget = React.memo(({ styles }: any) => { const { calendarEvents } = useWellaura(); const today = moment(); const formattedDate = today.format("dddd, MMMM D"); const todaysEvents = useMemo(() => { if (!calendarEvents) return []; return calendarEvents.filter(e => moment(e.start).isSame(today, 'day') && !e.allDay).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()).slice(0, 3); }, [calendarEvents]); return ( <View><Text style={styles.dateText}>{formattedDate}</Text><Text style={styles.subTitle}>Today's Agenda</Text>{todaysEvents.length > 0 ? (todaysEvents.map(event => (<Text key={event.id} style={styles.cardText} numberOfLines={1}>{moment(event.start).format('h:mma')} - {event.title}</Text>))) : (<Text style={styles.cardText}>No events scheduled today.</Text>)}</View> ); });
+const HabitsWidget = React.memo(({ styles }: any) => { const { habits } = useWellaura(); const today = new Date().toISOString().split('T')[0]; if (!habits || habits.length === 0) { return <Text style={styles.cardText}>No habits set up yet.</Text> } return ( <View style={{ gap: 4 }}>{habits.slice(0, 3).map((habit: any) => { const isCompleted = habit.history?.[today]?.completed || false; return (<Text key={habit.id} style={[styles.cardText, { textDecorationLine: isCompleted ? "line-through" : "none" }]}>{habit.icon} {habit.name}</Text>) })}</View> ); });
+const MindfulnessWidget = React.memo(({ styles }: any) => (<View><Text style={styles.cardText}>How are you feeling today?</Text><Text style={{ fontSize: 24, marginTop: 5 }}>😌</Text></View>));
+const MealPlannerWidget = React.memo(({ styles }: any) => { const { localMealPlan } = useMealPlan(); const dayOfWeek = moment().format('dddd'); const dinner = localMealPlan?.[dayOfWeek]?.dinner?.name; return <Text style={styles.cardText}>Tonight's Dinner: {dinner || 'Not planned'}</Text>; });
+const CycleTrackerWidget = React.memo(({ styles }: any) => { const { cycleInfo } = useCycle(); if (!cycleInfo) return null; return ( <View><Text style={styles.subTitle}>{cycleInfo.phaseForToday}</Text><Text style={styles.cardText}>What are your symptoms today?</Text></View> ); });
+const WorkoutWidget = React.memo(({ styles }: any) => { const todaysWorkout = { name: "Full Body Strength A", exercises: [ { name: "Squats", sets: 3, reps: "8-12" }, { name: "Bench Press", sets: 3, reps: "8-12" }, { name: "Barbell Rows", sets: 3, reps: "8-12" }, ] }; if (!todaysWorkout) { return <Text style={styles.cardText}>No workout scheduled for today.</Text> } return ( <View><Text style={[styles.cardText, { fontWeight: 'bold', marginBottom: 6 }]}>{todaysWorkout.name}</Text>{todaysWorkout.exercises.map((ex, index) => ( <View key={index} style={styles.workoutExerciseRow}><Text style={styles.cardText}>{ex.name}</Text><Text style={styles.cardText}>{ex.sets} x {ex.reps}</Text></View> ))}</View> );});
+const InsightsWidget = React.memo(({ theme, styles }: any) => { const { habits, transactions } = useWellaura(); const { cycleInfo } = useCycle(); const [isExpanded, setIsExpanded] = useState(false); const rotation = useSharedValue(0); const allInsights = useMemo(() => { if (!habits || !transactions || !cycleInfo) return []; const cycleDataForInsights = { cycleStart: cycleInfo.lastCycleStart, phase: cycleInfo.phaseForToday }; const generatedInsights = generateWeeklyInsights(habits, transactions, cycleDataForInsights); let cycleInsight = ""; if (cycleInfo.dayOfCycle > 0) { cycleInsight = `You're on Day ${cycleInfo.dayOfCycle} of your cycle (${cycleInfo.phaseForToday}).`; } return [cycleInsight, ...generatedInsights].filter(Boolean); }, [habits, transactions, cycleInfo]); const animatedIconStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }], })); const toggleExpand = () => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setIsExpanded(!isExpanded); rotation.value = withTiming(isExpanded ? 0 : 180, { duration: 250 }); }; if (allInsights.length === 0) { return null; } return ( <TouchableOpacity activeOpacity={0.8} onPress={toggleExpand}><View style={styles.insightsCard}><View style={styles.insightsHeader}><Ionicons name="sparkles" size={22} color={theme.primary} /><Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Your Weekly Insights</Text><Animated.View style={[{ marginLeft: 'auto' }, animatedIconStyle]}><Ionicons name="chevron-down-outline" size={24} color={theme.primary} /></Animated.View></View>{isExpanded && (<View style={styles.insightsContent}>{allInsights.map((insight: string, index: number) => ( <Text key={index} style={styles.insightText}>• {insight}</Text> ))}</View>)}</View></TouchableOpacity> ); });
+const BudgetWidget = React.memo(({ styles }: any) => { return <View><Text style={styles.cardText}>Budget content will be here.</Text></View> });
+const AddWidgetModal = ({ isVisible, onClose, onAddWidget, availableWidgets, theme, styles }: any) => { return ( <Modal visible={isVisible} onRequestClose={onClose} transparent animationType="fade"><View style={styles.modalBackdrop}><View style={[styles.modalContainer, { backgroundColor: theme.background }]}><Text style={[styles.modalTitle, { color: theme.textPrimary }]}>Add a Widget</Text><ScrollView style={{ width: '100%' }}>{availableWidgets.map((widget) => { const icon = widget.icon(theme, theme.textPrimary); return ( <TouchableOpacity key={widget.key} style={styles.addWidgetItem} onPress={() => onAddWidget(widget)}> {icon} <Text style={styles.addWidgetItemText}>{widget.title}</Text></TouchableOpacity> );})}</ScrollView><TouchableOpacity style={[styles.confirmButton, { backgroundColor: theme.primary }]} onPress={onClose}><Text style={[styles.confirmButtonText, { color: tinycolor(theme.primary).isDark() ? theme.white : theme.textPrimary }]}>Done</Text></TouchableOpacity></View></View></Modal> );};
+const ColorPickerModal = ({ isVisible, onClose, initialColor, onColorConfirm, theme, styles }: any) => { const [tempColor, setTempColor] = useState(initialColor); const [hexInput, setHexInput] = useState(tinycolor(initialColor).toHexString()); useEffect(() => { setTempColor(initialColor); setHexInput(tinycolor(initialColor).toHexString()); }, [initialColor, isVisible]); const handleColorChange = (color: string) => { setTempColor(color); setHexInput(tinycolor(color).toHexString()); }; const applyHexCode = () => { const color = tinycolor(hexInput); if (color.isValid()) { setTempColor(color.toHexString()); } else { Alert.alert("Invalid Color", "Please enter a valid HEX color code."); } }; return ( <Modal visible={isVisible} onRequestClose={onClose} transparent animationType="fade"><View style={styles.modalBackdrop}><View style={styles.colorModalContainer}><Text style={styles.modalTitle}>Choose a Color</Text><View style={styles.pickerWrapper}><ColorPicker color={tempColor} onColorChangeComplete={handleColorChange} thumbSize={30} sliderSize={20} noSnap={true} row={false} /></View><Text style={styles.swatchLabel}>Swatches</Text><View style={styles.swatchContainer}>{pastelColors.map(color => (<TouchableOpacity key={color} style={[styles.swatch, { backgroundColor: color, borderColor: tinycolor.equals(tempColor, color) ? theme.primary : theme.border }]} onPress={() => handleColorChange(color)} />))}</View><View style={styles.hexInputContainer}><TextInput style={styles.hexInput} value={hexInput} onChangeText={setHexInput} placeholder="#FFFFFF" autoCapitalize="none" /><TouchableOpacity style={styles.applyButton} onPress={applyHexCode}><Text style={styles.applyButtonText}>Apply</Text></TouchableOpacity></View><TouchableOpacity style={styles.confirmButton} onPress={() => onColorConfirm(tempColor)}><Text style={styles.confirmButtonText}>Done</Text></TouchableOpacity></View></View></Modal> );};
+const ThemeEditorModal = ({ isVisible, onClose, theme, onColorSelect, onSelectPreset, styles }: any) => { const themeOptions = [ { key: 'background', label: 'Page Background' }, { key: 'surface', label: 'Widget Background' }, { key: 'textPrimary', label: 'Primary Text' }, { key: 'primary', label: 'Accent Color' }, ]; return ( <Modal visible={isVisible} onRequestClose={onClose} transparent animationType="fade"><View style={styles.modalBackdrop}><View style={[styles.colorModalContainer, {backgroundColor: theme.surface}]}><Text style={[styles.modalTitle, {color: tinycolor(theme.surface).isDark() ? theme.white : theme.textPrimary}]}>Edit Theme</Text><ScrollView style={{width: '100%'}}><Text style={[styles.swatchLabel, {color: tinycolor(theme.surface).isDark() ? tinycolor(theme.white).setAlpha(0.7).toRgbString() : theme.textSecondary}]}>Preset Themes</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.presetThemeScrollView}>{PRESET_THEMES.map(preset => ( <TouchableOpacity key={preset.name} onPress={() => onSelectPreset(preset.colors)}><View style={[styles.presetThemeCard, { backgroundColor: preset.colors.surface, borderColor: preset.colors.primary }]}><Text style={[styles.presetThemeName, { color: tinycolor(preset.colors.surface).isDark() ? preset.colors.white : preset.colors.textPrimary }]}>{preset.name}</Text><View style={styles.presetThemeColors}><View style={[styles.presetThemeSwatch, { backgroundColor: preset.colors.primary, borderColor: preset.colors.surface }]} /><View style={[styles.presetThemeSwatch, { backgroundColor: preset.colors.accent, borderColor: preset.colors.surface }]} /><View style={[styles.presetThemeSwatch, { backgroundColor: preset.colors.background, borderColor: preset.colors.surface }]} /></View></View></TouchableOpacity> ))}</ScrollView><Text style={[styles.swatchLabel, {color: tinycolor(theme.surface).isDark() ? tinycolor(theme.white).setAlpha(0.7).toRgbString() : theme.textSecondary}]}>Custom Colors</Text>{themeOptions.map(option => ( <TouchableOpacity key={option.key} style={styles.themeEditorRow} onPress={() => onColorSelect(option.key)}><Text style={[styles.themeEditorLabel, {color: tinycolor(theme.surface).isDark() ? theme.white : theme.textPrimary}]}>{option.label}</Text><View style={[styles.themeEditorSwatch, { backgroundColor: theme[option.key] }]} /></TouchableOpacity> ))}</ScrollView><TouchableOpacity style={[styles.confirmButton, {backgroundColor: theme.primary}]} onPress={onClose}><Text style={[styles.confirmButtonText, {color: tinycolor(theme.primary).isDark() ? theme.white : theme.textPrimary}]}>Done</Text></TouchableOpacity></View></View></Modal> );};
 
+// --- COACH WIDGET TEMPLATE ---
 type Widget = { key: string; path: string; title: string; icon: (theme: any, color: string) => React.ReactNode; component: React.FC<any>; height: number; color?: string };
-
 const WIDGETS_TEMPLATE: Widget[] = [
     { key: "client-dashboard-widget", path: "/clientdash", title: "Client Dashboard", icon: (theme, color) => <Ionicons name="people-outline" size={20} color={color} />, component: ClientDashboardWidget, height: 260 },
     { key: "workout-widget", path: "/workout", title: "Today's Workout", icon: (theme, color) => <Ionicons name="barbell-outline" size={20} color={color} />, component: WorkoutWidget, height: 220 },
     { key: "calendar-widget", path: "/calendar", title: "Calendar & To-Do", icon: (theme, color) => <Ionicons name="calendar-outline" size={20} color={color} />, component: CalendarWidget, height: 240 },
-    // ... other widgets
+    { key: "meal-planner-widget", path: "/meal-planner", title: "Meal Planner", icon: (theme, color) => <Ionicons name="restaurant-outline" size={20} color={color} />, component: MealPlannerWidget, height: 160 },
+    { key: "habits-widget", path: "/habit-tracker", title: "Habits", icon: (theme, color) => <Ionicons name="checkmark-done-outline" size={20} color={color} />, component: HabitsWidget, height: 160 },
+    { key: "cycle-tracker-widget", path: "/cycle", title: "Cycle Tracker", icon: (theme, color) => <Ionicons name="heart-outline" size={20} color={color} />, component: CycleTrackerWidget, height: 160 },
+    { key: "mindfulness-widget", path: "/mindfulness-page", title: "Mindfulness", icon: (theme, color) => <Ionicons name="leaf-outline" size={20} color={color} />, component: MindfulnessWidget, height: 160 },
+    { key: "budget-widget", path: "/budget", title: "Budget", icon: (theme, color) => <FontAwesome name="money" size={20} color={color} />, component: BudgetWidget, height: 220 },
 ];
 
-const WidgetRenderer = ({ item, isLoading, styles }: any) => {
+const WidgetRenderer = React.memo(({ item, isLoading, styles }: any) => {
     const WidgetComponent = item.component;
     return isLoading ? <SkeletonLoader height={item.height} styles={styles} /> : <WidgetComponent styles={styles} />;
-};
+});
 
 // --- MAIN COACH INDEX COMPONENT ---
 export default function CoachIndexPage() {
@@ -137,10 +173,8 @@ export default function CoachIndexPage() {
       try {
         const themeValue = await AsyncStorage.getItem(THEME_STORAGE_KEY);
         if (themeValue) setTheme(JSON.parse(themeValue));
-        
         const layoutValue = await AsyncStorage.getItem(LAYOUT_STORAGE_KEY);
         if (layoutValue) setNumColumns(JSON.parse(layoutValue));
-        
         const widgetsValue = await AsyncStorage.getItem(WIDGETS_STORAGE_KEY);
         const savedWidgets = widgetsValue ? JSON.parse(widgetsValue) : null;
         if (Array.isArray(savedWidgets) && savedWidgets.length > 0) {
@@ -161,7 +195,7 @@ export default function CoachIndexPage() {
   const saveWidgets = async (newWidgets: Widget[]) => { try { const simplified = newWidgets.map(({ component, icon, ...rest }) => rest); await AsyncStorage.setItem(WIDGETS_STORAGE_KEY, JSON.stringify(simplified)); setWidgets(newWidgets); } catch (e) { console.error("Failed to save coach widgets.", e); } };
   const updateWidgetProperty = (key: string, property: 'height' | 'color', value: any) => { const newWidgets = widgets.map(w => w.key === key ? { ...w, [property]: value } : w); saveWidgets(newWidgets); };
   const deleteWidget = (keyToDelete: string) => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); const newWidgets = widgets.filter(w => w.key !== keyToDelete); saveWidgets(newWidgets); };
-  const addWidget = (widgetToAdd: Widget) => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); const newWidgets = [...widgets, widgetToAdd]; saveWidgets(newWidgets); setAddWidgetModalVisible(false); };
+  const addWidget = (widgetToAdd: Widget) => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); const newWidgets = [...widgets, widgetToAdd]; setAddWidgetModalVisible(false); };
   const availableWidgets = useMemo(() => { const displayedWidgetKeys = new Set(widgets.map(w => w.key)); return WIDGETS_TEMPLATE.filter(w => !displayedWidgetKeys.has(w.key)); }, [widgets]);
   const handleSelectColorToEdit = (type: 'widget' | 'theme', key: string) => { setEditingItem({ type, key }); setThemeEditorVisible(false); setPickerVisible(true); };
   const handleCloseColorPicker = () => { setPickerVisible(false); setEditingItem(null); if (editingItem?.type === 'theme') { setThemeEditorVisible(true); } };
@@ -246,28 +280,9 @@ export default function CoachIndexPage() {
         ListFooterComponent={<View style={{ height: 40 }} />}
       />
       <TodaySnapshotModal visible={isSnapshotModalVisible} onClose={() => setSnapshotModalVisible(false)} />
-      <ColorPickerModal
-        isVisible={isPickerVisible}
-        onClose={handleCloseColorPicker}
-        initialColor={editingItem?.type === 'widget' ? widgets.find(w => w.key === editingItem.key)?.color || theme.surface : theme[editingItem?.key || 'surface']}
-        onColorConfirm={confirmColor}
-        theme={theme}
-      />
-      <ThemeEditorModal
-        isVisible={isThemeEditorVisible}
-        onClose={() => setThemeEditorVisible(false)}
-        theme={theme}
-        onColorSelect={(key) => handleSelectColorToEdit('theme', key)}
-        onSelectPreset={handleSelectPresetTheme}
-        PRESET_THEMES={PRESET_THEMES}
-      />
-      <AddWidgetModal
-        isVisible={isAddWidgetModalVisible}
-        onClose={() => setAddWidgetModalVisible(false)}
-        onAddWidget={addWidget}
-        availableWidgets={availableWidgets}
-        theme={theme}
-      />
+      <AddWidgetModal isVisible={isAddWidgetModalVisible} onClose={() => setAddWidgetModalVisible(false)} onAddWidget={addWidget} availableWidgets={availableWidgets} theme={theme} styles={styles} />
+      <ColorPickerModal isVisible={isPickerVisible} onClose={handleCloseColorPicker} initialColor={editingItem?.type === 'widget' ? widgets.find(w => w.key === editingItem.key)?.color || theme.surface : theme[editingItem?.key || 'surface']} onColorConfirm={confirmColor} theme={theme} styles={styles} />
+      <ThemeEditorModal isVisible={isThemeEditorVisible} onClose={() => setThemeEditorVisible(false)} theme={theme} onColorSelect={(key) => handleSelectColorToEdit('theme', key)} onSelectPreset={handleSelectPresetTheme} PRESET_THEMES={PRESET_THEMES} styles={styles} />
     </SafeAreaView>
   );
 }

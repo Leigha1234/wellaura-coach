@@ -1,92 +1,48 @@
+import { useRouter } from 'expo-router';
 import React from 'react';
 import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useAuth } from './context/AuthContext';
 import { useTheme } from './context/ThemeContext';
 
-export default function RoleSelectionScreen() {
+export default function WelcomeScreen() {
+  const router = useRouter();
   const { theme } = useTheme();
-  const { login } = useAuth(); // We only need the login function now
 
-  // The useEffect for navigation has been removed from this file.
-  // All redirection logic is now handled globally in app/_layout.tsx.
-
-  if (!theme) {
-    return null; // Return a fallback while the theme is loading
-  }
+  if (!theme) return null;
+  
+  const styles = getDynamicStyles(theme);
 
   return (
-    <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]}>
+    <SafeAreaView style={styles.screen}>
       <View style={styles.container}>
-        <Text style={[styles.title, { color: theme.textPrimary }]}>Select Your Role</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-          Choose your experience to get started.
-        </Text>
+        {/* You can add a logo or branding image here */}
+        <Text style={styles.title}>Wellaura Coach</Text>
+        <Text style={styles.subtitle}>Your all-in-one coaching platform.</Text>
         
-        {/* This button calls login, and the root layout handles the redirect */}
         <TouchableOpacity 
-          style={[styles.button, { backgroundColor: theme.primary }]}
-          onPress={() => login('coach-123')}
+          style={styles.primaryButton}
+          onPress={() => router.push('/signup')} // Navigate to sign up page
         >
-          <Text style={[styles.buttonText, { color: theme.white }]}>I am a Coach</Text>
+          <Text style={styles.primaryButtonText}>Get Started</Text>
         </TouchableOpacity>
         
-        {/* This button calls login for a specific client */}
         <TouchableOpacity 
-          style={[styles.button, { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1 }]}
-          onPress={() => login('1')}
+          style={styles.secondaryButton}
+          onPress={() => router.push('/login')} // Navigate to login page
         >
-          <Text style={[styles.buttonText, { color: theme.textPrimary }]}>I am a Client (Jane Doe)</Text>
-        </TouchableOpacity>
-
-        {/* Example button for another client */}
-        <TouchableOpacity 
-          style={[styles.button, { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1 }]}
-          onPress={() => login('2')}
-        >
-          <Text style={[styles.buttonText, { color: theme.textPrimary }]}>I am a Client (John Smith)</Text>
+          <Text style={styles.secondaryButtonText}>I Already Have an Account</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-  },
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 50,
-  },
-  button: {
-    width: '100%',
-    paddingVertical: 18,
-    borderRadius: 16,
-    alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  buttonText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
+const getDynamicStyles = (theme: any) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.background },
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  title: { fontSize: 40, fontWeight: 'bold', color: theme.textPrimary, marginBottom: 8 },
+  subtitle: { fontSize: 18, color: theme.textSecondary, marginBottom: 60, textAlign: 'center' },
+  primaryButton: { width: '100%', padding: 18, borderRadius: 16, alignItems: 'center', backgroundColor: theme.primary, marginBottom: 16 },
+  primaryButtonText: { fontSize: 18, fontWeight: '600', color: theme.white },
+  secondaryButton: { width: '100%', padding: 18, borderRadius: 16, alignItems: 'center' },
+  secondaryButtonText: { fontSize: 18, fontWeight: '600', color: theme.primary },
 });

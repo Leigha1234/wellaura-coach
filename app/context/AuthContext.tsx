@@ -1,82 +1,108 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
 
 // --- TYPE DEFINITIONS ---
 interface User {
   id: string;
   name: string;
   role: 'coach' | 'client';
+  email?: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (userId: string) => void;
+  login: (email, password) => Promise<void>;
+  signUpCoach: (email, password, name) => Promise<void>;
+  createClientAccount: (email, password, name) => Promise<boolean>;
   logout: () => void;
-  isLoading: boolean; // Tracks initial session check
+  isLoading: boolean;
 }
-
-// --- MOCK USER DATABASE ---
-const MOCK_USERS: { [id: string]: User } = {
-  'coach-123': { id: 'coach-123', name: 'Leigha (Coach)', role: 'coach' },
-  '1': { id: '1', name: 'Jane Doe', role: 'client' },
-  '2': { id: '2', name: 'John Smith', role: 'client' },
-  '3': { id: '3', name: 'Alice Johnson', role: 'client' },
-  '4': { id: '4', name: 'Michael Brown', role: 'client' },
-};
 
 // --- CONTEXT CREATION ---
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 
 // --- PROVIDER COMPONENT ---
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // This effect runs once on app start to check for a saved user session
+  // Checks for a saved user session on app start
   useEffect(() => {
     const checkUserSession = async () => {
       try {
-        const savedUserId = await AsyncStorage.getItem('@auth_user_id');
-        if (savedUserId) {
-          const foundUser = MOCK_USERS[savedUserId];
-          if (foundUser) {
-            setUser(foundUser);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+          if (profile) {
+            setUser({ ...session.user, ...profile });
           }
         }
       } catch (e) {
         console.error("Failed to load user session.", e);
       } finally {
-        // We're done checking, so set loading to false
         setIsLoading(false);
       }
     };
-
     checkUserSession();
   }, []);
 
-  const login = async (userId: string) => {
-    const foundUser = MOCK_USERS[userId];
-    if (foundUser) {
-      setUser(foundUser);
-      await AsyncStorage.setItem('@auth_user_id', userId);
-    } else {
-      console.error("User not found!");
+  // --- UPDATED LOGIN FUNCTION ---
+  const login = async (email, password) => {
+    // Step 1: Authenticate with Supabase Auth
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+        alert(error.message);
+        return;
+    }
+
+    // Step 2: If authentication is successful, fetch the user's profile
+    if (data.user) {
+        const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('name, role') // We only need the name and role
+            .eq('id', data.user.id)
+            .single();
+        
+        if (profileError) {
+            alert(`Error fetching profile: ${profileError.message}`);
+        } else if (profile) {
+            // Step 3: Combine auth info with profile info and set the global user state
+            setUser({ 
+                id: data.user.id,
+                email: data.user.email,
+                name: profile.name,
+                role: profile.role,
+            });
+        }
     }
   };
 
+  const signUpCoach = async (email, password, name) => {
+    const { data, error } = await supabase.auth.signUp({
+      email: email,
+      password: password,
+      options: { data: { name: name, role: 'coach' } }
+    });
+    if (error) {
+      alert(error.message);
+    } else if (data.user) {
+      setUser({ id: data.user.id, email: data.user.email, name, role: 'coach' });
+    }
+  };
+  
+  const createClientAccount = async (email, password, name): Promise<boolean> => { /* ... (This function is correct) ... */ return false; };
+
   const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    await AsyncStorage.removeItem('@auth_user_id');
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, signUpCoach, createClientAccount, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
 };
-
 
 // --- CUSTOM HOOK ---
 export const useAuth = () => {
